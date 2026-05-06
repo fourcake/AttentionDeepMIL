@@ -142,6 +142,7 @@ def main():
     # Data paths
     csv_path = os.path.join(args.dataset_root, 'Label', 'labels_20200831.csv')
     skeleton_root = os.path.join(args.dataset_root, 'mg_skeleton_only')
+    npy_dir = os.path.join(args.dataset_root, 'mg_skeleton_npy')
 
     # Get splits
     train_ids, val_ids, test_ids = get_split_ids(args.dataset_root)
@@ -168,9 +169,12 @@ def main():
     print(f'Train label distribution: Win={n_win}, Lose={n_lose}, pos_weight={pos_weight_val:.4f}')
 
     # Build datasets
-    train_ds = iMiGUEDataset(csv_path, skeleton_root, train_ids, max_bag_size=args.max_bag_size)
-    val_ds = iMiGUEDataset(csv_path, skeleton_root, val_ids, max_bag_size=args.max_bag_size)
-    test_ds = iMiGUEDataset(csv_path, skeleton_root, test_ids, max_bag_size=args.max_bag_size)
+    train_ds = iMiGUEDataset(csv_path, skeleton_root, train_ids,
+                             max_bag_size=args.max_bag_size, skeleton_npy_dir=npy_dir)
+    val_ds = iMiGUEDataset(csv_path, skeleton_root, val_ids,
+                           max_bag_size=args.max_bag_size, skeleton_npy_dir=npy_dir)
+    test_ds = iMiGUEDataset(csv_path, skeleton_root, test_ids,
+                            max_bag_size=args.max_bag_size, skeleton_npy_dir=npy_dir)
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                               collate_fn=collate_fn, num_workers=2, pin_memory=True)

@@ -15,18 +15,21 @@ from torch.utils.data import Dataset
 
 class iMiGUEDataset(Dataset):
     def __init__(self, csv_path, skeleton_root, video_ids, max_bag_size=64,
-                 num_classes=32, filter_zero_frames=True, cache_skeletons=False):
+                 num_classes=32, filter_zero_frames=True, cache_skeletons=False,
+                 skeleton_npy_dir=None):
         """
         Args:
             csv_path: Path to labels_20200831.csv
-            skeleton_root: Path to mg_skeleton_only/
+            skeleton_root: Path to mg_skeleton_only/ (fallback xlsx)
             video_ids: List of video IDs for this split
             max_bag_size: Max number of instances per bag (pad to this)
             num_classes: Number of class bins (31 MG + 1 for class 99)
             filter_zero_frames: Filter all-zero frames before mean pooling
-            cache_skeletons: Cache skeleton data in memory (needs ~54GB for full set)
+            cache_skeletons: Cache skeleton data in memory
+            skeleton_npy_dir: Path to mg_skeleton_npy/ (fast numpy format, preferred)
         """
         self.skeleton_root = skeleton_root
+        self.skeleton_npy_dir = skeleton_npy_dir
         self.video_ids = list(video_ids)
         self.max_bag_size = max_bag_size
         self.num_classes = num_classes
@@ -52,8 +55,18 @@ class iMiGUEDataset(Dataset):
         if self.cache_skeletons and vid in self._skeleton_cache:
             return self._skeleton_cache[vid]
 
-        path = os.path.join(self.skeleton_root, f'{vid:04d}', f'{vid:04d}_2.xlsx')
-        skel = pd.read_excel(path, header=None).values  # (T, 411)
+        # Try fast numpy format first
+        if self.skeleton_npy_dir:
+            npy_path = os.path.join(self.skeleton_npy_dir, f'{vid:04d}.npy')
+            if os.path.exists(npy_path):
+                skel = np.load(npy_path)  # (T, 411) float32
+            else:
+                # Fallback to xlsx
+                path = os.path.join(self.skeleton_root, f'{vid:04d}', f'{vid:04d}_2.xlsx')
+                skel = pd.read_excel(path, header=None).values
+        else:
+            path = os.path.join(self.skeleton_root, f'{vid:04d}', f'{vid:04d}_2.xlsx')
+            skel = pd.read_excel(path, header=None).values  # (T, 411)
 
         if self.cache_skeletons:
             self._skeleton_cache[vid] = skel
@@ -153,17 +166,16 @@ def build_subject_cv_folds(train_ids, csv_path, n_folds=5):
 
 
 if __name__ == '__main__':
-    # Quick test
-    import sys
     dataset_root = '/data-store/xingke/iMiGUE'
     csv_path = os.path.join(dataset_root, 'Label', 'labels_20200831.csv')
     skeleton_root = os.path.join(dataset_root, 'mg_skeleton_only')
+    npy_dir = os.path.join(dataset_root, 'mg_skeleton_npy')
 
     train_ids, val_ids, test_ids = get_split_ids(dataset_root)
     print(f'Splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}')
 
     # Test with a small subset
-    ds = iMiGUEDataset(csv_path, skeleton_root, train_ids[:5])
+    ds = iMiGUEDataset(csv_path, skeleton_root, train_ids[:5], skeleton_npy_dir=npy_dir)
     print(f'Dataset size: {len(ds)}')
 
     sample = ds[0]
