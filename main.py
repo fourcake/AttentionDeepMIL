@@ -1,12 +1,12 @@
 from __future__ import print_function
 
 import argparse
+import os
 
 import numpy as np
 import torch
 import torch.optim as optim
 import torch.utils.data as data_utils
-from torch.autograd import Variable
 
 from dataloader import MnistBags
 from model import Attention, GatedAttention
@@ -85,13 +85,12 @@ def train(epoch):
         bag_label = label[0]
         if args.cuda:
             data, bag_label = data.cuda(), bag_label.cuda()
-        data, bag_label = Variable(data), Variable(bag_label)
 
         # reset gradients
         optimizer.zero_grad()
         # calculate loss and metrics
         loss, _ = model.calculate_objective(data, bag_label)
-        train_loss += loss.data[0]
+        train_loss += loss.item()
         error, _ = model.calculate_classification_error(data, bag_label)
         train_error += error
         # backward pass
@@ -103,23 +102,22 @@ def train(epoch):
     train_loss /= len(train_loader)
     train_error /= len(train_loader)
 
-    print('Epoch: {}, Loss: {:.4f}, Train error: {:.4f}'.format(epoch, train_loss.cpu().numpy()[0], train_error))
+    print('Epoch: {}, Loss: {:.4f}, Train error: {:.4f}'.format(epoch, train_loss, train_error))
 
 
 def test():
     model.eval()
     test_loss = 0.
     test_error = 0.
-    
+
     with torch.no_grad():
         for batch_idx, (data, label) in enumerate(test_loader):
             bag_label = label[0]
             instance_labels = label[1]
             if args.cuda:
                 data, bag_label = data.cuda(), bag_label.cuda()
-            data, bag_label = Variable(data), Variable(bag_label)
             loss, attention_weights = model.calculate_objective(data, bag_label)
-            test_loss += loss.data[0]
+            test_loss += loss.item()
             error, predicted_label = model.calculate_classification_error(data, bag_label)
             test_error += error
 
@@ -134,7 +132,7 @@ def test():
     test_error /= len(test_loader)
     test_loss /= len(test_loader)
 
-    print('\nTest Set, Loss: {:.4f}, Test error: {:.4f}'.format(test_loss.cpu().numpy()[0], test_error))
+    print('\nTest Set, Loss: {:.4f}, Test error: {:.4f}'.format(test_loss, test_error))
 
 
 if __name__ == "__main__":
