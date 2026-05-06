@@ -20,7 +20,7 @@ import time
 import numpy as np
 import torch
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from imigue_dataset import iMiGUEDataset, get_split_ids, build_subject_cv_folds
 from model_imigue import ABMIL_iMiGUE, GatedABMIL_iMiGUE
@@ -157,16 +157,18 @@ def main():
         # For now, include all — class 99 filtering is an ablation option
         print('Including all instances (class 99 included)')
 
-    # Compute pos_weight for imbalanced data (Win:Lose = 192:53 in train)
-    # pos_weight = N_negative / N_positive for BCE
+    # Compute class counts for balanced sampling
     import pandas as pd
     df = pd.read_csv(csv_path)
     train_labels = df[df['video_id'].isin(train_ids)].groupby('video_id')['win_or_lose'].first()
     n_win = (train_labels == 'Win').sum()
     n_lose = (train_labels == 'Lose').sum()
-    pos_weight_val = n_lose / n_win  # Win is class 1, so weight the positive class less
-    pos_weight = torch.FloatTensor([pos_weight_val]).to(device)
-    print(f'Train label distribution: Win={n_win}, Lose={n_lose}, pos_weight={pos_weight_val:.4f}')
+    # Use pos_weight to compensate for class imbalance in BCE loss
+    # pos_weight > 1 increases recall for positive class (Win=1)
+    # Since Win is majority, we actually want to focus more on Lose (minority)
+    # Setting pos_weight=1.0 and relying on balanced sampling instead
+    pos_weight = None  # handled by WeightedRandomSampler
+    print(f'Train label distribution: Win={n_win}, Lose={n_lose}')
 
     # Build datasets
     train_ds = iMiGUEDataset(csv_path, skeleton_root, train_ids,
@@ -176,7 +178,15 @@ def main():
     test_ds = iMiGUEDataset(csv_path, skeleton_root, test_ids,
                             max_bag_size=args.max_bag_size, skeleton_npy_dir=npy_dir)
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+    # Balanced sampling: oversample Lose class to match Win class
+    train_sample_weights = []
+    for vid in train_ids:
+        label = train_ds.bags[vid]['label']
+        # Win=1 (majority): weight 1/n_win, Lose=0 (minority): weight 1/n_lose
+        train_sample_weights.append(1.0 / n_win if label == 1 else 1.0 / n_lose)
+    sampler = WeightedRandomSampler(train_sample_weights, num_samples=len(train_ids), replacement=True)
+
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, sampler=sampler,
                               collate_fn=collate_fn, num_workers=2, pin_memory=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
                             collate_fn=collate_fn, num_workers=2, pin_memory=True)

@@ -68,6 +68,10 @@ class iMiGUEDataset(Dataset):
             path = os.path.join(self.skeleton_root, f'{vid:04d}', f'{vid:04d}_2.xlsx')
             skel = pd.read_excel(path, header=None).values  # (T, 411)
 
+        # Handle empty skeleton files (videos 347, 348 have empty xlsx)
+        if skel.ndim < 2 or skel.shape[0] == 0 or skel.shape[1] == 0:
+            skel = np.zeros((1, 411), dtype=np.float32)
+
         if self.cache_skeletons:
             self._skeleton_cache[vid] = skel
         return skel
@@ -79,27 +83,44 @@ class iMiGUEDataset(Dataset):
         skel = self._load_skeleton(vid)  # (T, 411)
         instances = bag['instances']     # (N, 3): class, start_frame, end_frame
 
+        skel_dim = skel.shape[1] if skel.ndim == 2 else 411
+        feat_dim = skel_dim + self.num_classes  # typically 443
+
         features = []
         for cls, sf, ef in instances:
             sf, ef = int(sf), int(ef)
-            seg = skel[sf:ef, :]  # (T_inst, 411)
 
-            if self.filter_zero_frames:
+            # Clamp to valid range
+            sf = max(0, min(sf, skel.shape[0] - 1))
+            ef = max(sf + 1, min(ef, skel.shape[0]))
+            seg = skel[sf:ef, :]  # (T_inst, skel_dim)
+
+            if self.filter_zero_frames and seg.shape[0] > 0:
                 valid = seg.any(axis=1)
                 if valid.any():
                     seg = seg[valid]
-                else:
-                    seg = seg[:1]  # keep at least one frame
 
-            feat = seg.mean(axis=0)  # (411,)
+            if seg.shape[0] == 0:
+                # Empty segment: use zero vector
+                skel_feat = np.zeros(skel_dim, dtype=np.float32)
+            else:
+                skel_feat = seg.mean(axis=0).astype(np.float32)
+
+            # Replace NaN with 0
+            skel_feat = np.nan_to_num(skel_feat, nan=0.0)
 
             # Class one-hot: classes 1-31 -> bins 0-30, class 99 -> bin 31
             class_oh = np.zeros(self.num_classes, dtype=np.float32)
-            bin_idx = (cls - 1) if cls < self.num_classes else (self.num_classes - 1)
+            bin_idx = (cls - 1) if 1 <= cls < self.num_classes else (self.num_classes - 1)
             class_oh[int(bin_idx)] = 1.0
-            feat = np.concatenate([feat, class_oh])  # (443,)
+            feat = np.concatenate([skel_feat, class_oh])  # (feat_dim,)
 
+            assert feat.shape[0] == feat_dim, f'Feature dim mismatch: {feat.shape[0]} != {feat_dim}'
             features.append(feat)
+
+        # Handle empty bag (no instances)
+        if len(features) == 0:
+            features.append(np.zeros(feat_dim, dtype=np.float32))
 
         # Truncate if too many instances
         N = len(features)
@@ -108,7 +129,6 @@ class iMiGUEDataset(Dataset):
             N = self.max_bag_size
 
         # Pad to max_bag_size
-        feat_dim = features[0].shape[0] if features else 443
         if N < self.max_bag_size:
             features.extend([np.zeros(feat_dim, dtype=np.float32)] * (self.max_bag_size - N))
 
