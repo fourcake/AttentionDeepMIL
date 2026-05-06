@@ -1,0 +1,43 @@
+
+GPU is ON!
+Load Train and Test Set
+Init Model
+Start Training
+Epoch: 1, Loss: 0.6606, Train error: 0.3750
+Epoch: 2, Loss: 0.6520, Train error: 0.3700
+Epoch: 3, Loss: 0.4130, Train error: 0.2050
+Epoch: 4, Loss: 0.2464, Train error: 0.1100
+Epoch: 5, Loss: 0.2200, Train error: 0.0850
+Epoch: 6, Loss: 0.1805, Train error: 0.0700
+Epoch: 7, Loss: 0.0959, Train error: 0.0250
+Epoch: 8, Loss: 0.1175, Train error: 0.0500
+Epoch: 9, Loss: 0.0311, Train error: 0.0050
+Epoch: 10, Loss: 0.0824, Train error: 0.0200
+Epoch: 11, Loss: 0.0107, Train error: 0.0050
+Epoch: 12, Loss: 0.0015, Train error: 0.0000
+Epoch: 13, Loss: 0.0007, Train error: 0.0000
+Epoch: 14, Loss: 0.0004, Train error: 0.0000
+Epoch: 15, Loss: 0.0003, Train error: 0.0000
+Epoch: 16, Loss: 0.0002, Train error: 0.0000
+Epoch: 17, Loss: 0.0002, Train error: 0.0000
+Epoch: 18, Loss: 0.0001, Train error: 0.0000
+Epoch: 19, Loss: 0.0001, Train error: 0.0000
+Epoch: 20, Loss: 0.0001, Train error: 0.0000
+Start Testing
+
+True Bag Label, Predicted Bag Label: (True, 1)
+True Instance Labels, Attention Weights: [(False, 0.0), (True, 0.5849999785423279), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (True, 0.41499999165534973)]
+
+True Bag Label, Predicted Bag Label: (True, 1)
+True Instance Labels, Attention Weights: [(False, 0.0), (False, 0.0), (False, 0.0), (True, 0.4959999918937683), (False, 0.0), (True, 0.5040000081062317), (False, 0.0), (False, 0.0)]
+
+True Bag Label, Predicted Bag Label: (True, 1)
+True Instance Labels, Attention Weights: [(False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (True, 1.0), (False, 0.0)]
+
+True Bag Label, Predicted Bag Label: (True, 1)
+True Instance Labels, Attention Weights: [(False, 0.0), (False, 0.0), (False, 0.0), (True, 1.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0)]
+
+True Bag Label, Predicted Bag Label: (True, 1)
+True Instance Labels, Attention Weights: [(False, 0.0), (True, 1.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0), (False, 0.0)]
+
+Test Set, Loss: 0.6626, Test error: 0.1000
