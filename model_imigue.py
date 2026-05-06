@@ -4,6 +4,10 @@ Input: bag of feature vectors (N x 443), where 443 = 411 (skeleton) + 32 (class 
 Output: bag-level binary prediction (Win/Lose) + attention weights over instances
 
 Based on: Ilse, Tomczak & Welling, "Attention-based Deep Multiple Instance Learning", ICML 2018
+
+Changes from original:
+- BCEWithLogitsLoss instead of Sigmoid + BCELoss (numerical stability)
+- Logits returned from forward() for loss computation
 """
 
 import torch
@@ -36,11 +40,8 @@ class ABMIL_iMiGUE(nn.Module):
             nn.Linear(attention_dim, attention_branches),
         )
 
-        # Classifier
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim * attention_branches, 1),
-            nn.Sigmoid(),
-        )
+        # Classifier: output raw logits (no Sigmoid)
+        self.classifier = nn.Linear(hidden_dim * attention_branches, 1)
 
     def forward(self, x, mask=None):
         """
@@ -48,7 +49,7 @@ class ABMIL_iMiGUE(nn.Module):
             x: (batch, max_bag_size, input_dim) — padded bag features
             mask: (batch, max_bag_size) — True for real instances, False for padding
         Returns:
-            y_prob: (batch, 1) — bag-level probability
+            y_logit: (batch, 1) — bag-level logit (before sigmoid)
             y_hat: (batch, 1) — bag-level prediction (0 or 1)
             A: (batch, attention_branches, max_bag_size) — attention weights
         """
@@ -79,14 +80,14 @@ class ABMIL_iMiGUE(nn.Module):
         Z = torch.bmm(A, H)  # (batch, attn_branches, hidden_dim)
         Z = Z.view(batch_size, -1)  # (batch, attn_branches * hidden_dim)
 
-        # Classify
-        y_prob = self.classifier(Z)  # (batch, 1)
-        y_hat = (y_prob >= 0.5).float()
+        # Classify: raw logits (no Sigmoid)
+        y_logit = self.classifier(Z)  # (batch, 1)
+        y_hat = (y_logit >= 0.0).float()  # logit >= 0 means prob >= 0.5
 
-        return y_prob, y_hat, A
+        return y_logit, y_hat, A
 
     def calculate_loss(self, x, y, mask=None, pos_weight=None):
-        """Binary cross-entropy loss.
+        """Binary cross-entropy loss with logits (numerically stable).
 
         Args:
             x: bag features
@@ -94,22 +95,22 @@ class ABMIL_iMiGUE(nn.Module):
             mask: attention mask
             pos_weight: weight for positive class (for imbalanced data)
         """
-        y = y.float()
-        y_prob, _, A = self.forward(x, mask)
-        y_prob = torch.clamp(y_prob, min=1e-5, max=1.0 - 1e-5)
+        y = y.float().unsqueeze(1) if y.dim() == 1 else y.float()
+        y_logit, _, A = self.forward(x, mask)
 
         if pos_weight is not None:
-            loss = F.binary_cross_entropy(y_prob, y, reduction='none')
-            weight = torch.where(y == 1, pos_weight, 1.0)
-            loss = (loss * weight).mean()
+            loss = F.binary_cross_entropy_with_logits(
+                y_logit, y, reduction='none',
+                pos_weight=torch.tensor([pos_weight], device=y.device))
+            loss = loss.mean()
         else:
-            loss = F.binary_cross_entropy(y_prob, y)
+            loss = F.binary_cross_entropy_with_logits(y_logit, y)
 
         return loss, A
 
     def calculate_error(self, x, y, mask=None):
         """Classification error rate."""
-        y = y.float()
+        y = y.float().unsqueeze(1) if y.dim() == 1 else y.float()
         _, y_hat, _ = self.forward(x, mask)
         error = 1.0 - y_hat.eq(y).float().mean().item()
         return error, y_hat
@@ -144,10 +145,8 @@ class GatedABMIL_iMiGUE(nn.Module):
         )
         self.attention_w = nn.Linear(attention_dim, attention_branches)
 
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim * attention_branches, 1),
-            nn.Sigmoid(),
-        )
+        # Classifier: output raw logits (no Sigmoid)
+        self.classifier = nn.Linear(hidden_dim * attention_branches, 1)
 
     def forward(self, x, mask=None):
         batch_size, max_bag, input_dim = x.shape
@@ -171,27 +170,27 @@ class GatedABMIL_iMiGUE(nn.Module):
         Z = torch.bmm(A, H)
         Z = Z.view(batch_size, -1)
 
-        y_prob = self.classifier(Z)
-        y_hat = (y_prob >= 0.5).float()
+        y_logit = self.classifier(Z)
+        y_hat = (y_logit >= 0.0).float()
 
-        return y_prob, y_hat, A
+        return y_logit, y_hat, A
 
     def calculate_loss(self, x, y, mask=None, pos_weight=None):
-        y = y.float()
-        y_prob, _, A = self.forward(x, mask)
-        y_prob = torch.clamp(y_prob, min=1e-5, max=1.0 - 1e-5)
+        y = y.float().unsqueeze(1) if y.dim() == 1 else y.float()
+        y_logit, _, A = self.forward(x, mask)
 
         if pos_weight is not None:
-            loss = F.binary_cross_entropy(y_prob, y, reduction='none')
-            weight = torch.where(y == 1, pos_weight, 1.0)
-            loss = (loss * weight).mean()
+            loss = F.binary_cross_entropy_with_logits(
+                y_logit, y, reduction='none',
+                pos_weight=torch.tensor([pos_weight], device=y.device))
+            loss = loss.mean()
         else:
-            loss = F.binary_cross_entropy(y_prob, y)
+            loss = F.binary_cross_entropy_with_logits(y_logit, y)
 
         return loss, A
 
     def calculate_error(self, x, y, mask=None):
-        y = y.float()
+        y = y.float().unsqueeze(1) if y.dim() == 1 else y.float()
         _, y_hat, _ = self.forward(x, mask)
         error = 1.0 - y_hat.eq(y).float().mean().item()
         return error, y_hat

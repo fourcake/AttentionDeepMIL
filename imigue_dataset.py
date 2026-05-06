@@ -14,9 +14,10 @@ from torch.utils.data import Dataset
 
 
 class iMiGUEDataset(Dataset):
-    def __init__(self, csv_path, skeleton_root, video_ids, max_bag_size=64,
+    def __init__(self, csv_path, skeleton_root, video_ids, max_bag_size=256,
                  num_classes=32, filter_zero_frames=True, cache_skeletons=False,
-                 skeleton_npy_dir=None, normalize_features=True):
+                 skeleton_npy_dir=None, normalize_features=True,
+                 include_class99=True, exclude_empty_skeletons=True):
         """
         Args:
             csv_path: Path to labels_20200831.csv
@@ -28,6 +29,8 @@ class iMiGUEDataset(Dataset):
             cache_skeletons: Cache skeleton data in memory
             skeleton_npy_dir: Path to mg_skeleton_npy/ (fast numpy format, preferred)
             normalize_features: Z-normalize skeleton features per-video
+            include_class99: If False, filter out class 99 (non-MG) instances
+            exclude_empty_skeletons: If True, exclude videos 347, 348 (empty skeleton files)
         """
         self.skeleton_root = skeleton_root
         self.skeleton_npy_dir = skeleton_npy_dir
@@ -37,18 +40,59 @@ class iMiGUEDataset(Dataset):
         self.filter_zero_frames = filter_zero_frames
         self.cache_skeletons = cache_skeletons
         self.normalize_features = normalize_features
+        self.include_class99 = include_class99
         self._skeleton_cache = {}
+
+        # Videos with empty skeleton files (0-row xlsx)
+        self.empty_skeleton_videos = {347, 348}
 
         # Read and group annotations
         df = pd.read_csv(csv_path)
         self.bags = {}
+        skipped_empty = 0
+        skipped_no_instances = 0
+
         for vid in self.video_ids:
+            # Optionally exclude videos with empty skeleton files
+            if exclude_empty_skeletons and vid in self.empty_skeleton_videos:
+                skipped_empty += 1
+                continue
+
             sub = df[df['video_id'] == vid].sort_values('start_frame')
+
+            # Filter class 99 if requested
+            if not self.include_class99:
+                sub = sub[sub['class'] != 99]
+
+            if len(sub) == 0:
+                skipped_no_instances += 1
+                continue
+
             self.bags[vid] = {
                 'instances': sub[['class', 'start_frame', 'end_frame']].values,
                 'label': 1 if sub.iloc[0]['win_or_lose'] == 'Win' else 0,
                 'subject_id': sub.iloc[0]['subject_id'],
+                'num_instances_raw': len(sub),
             }
+
+        self.video_ids = list(self.bags.keys())
+
+        # Log statistics
+        if skipped_empty > 0:
+            print(f'  Skipped {skipped_empty} videos with empty skeleton files')
+        if skipped_no_instances > 0:
+            print(f'  Skipped {skipped_no_instances} videos with no instances after filtering')
+        if not self.include_class99:
+            n_filtered = sum(1 for _ in df[df['class'] == 99]['video_id'].unique()
+                             if _ in video_ids)
+            print(f'  Class 99 filtered: {n_filtered} videos had class 99 instances removed')
+
+        # Report bag size distribution
+        bag_sizes = [b['num_instances_raw'] for b in self.bags.values()]
+        if bag_sizes:
+            over_limit = sum(1 for s in bag_sizes if s > self.max_bag_size)
+            print(f'  Bag sizes: mean={np.mean(bag_sizes):.1f}, median={np.median(bag_sizes):.0f}, '
+                  f'max={max(bag_sizes)}, over {self.max_bag_size}={over_limit}')
 
     def __len__(self):
         return len(self.video_ids)
@@ -88,12 +132,16 @@ class iMiGUEDataset(Dataset):
         skel_dim = skel.shape[1] if skel.ndim == 2 else 411
         feat_dim = skel_dim + self.num_classes  # typically 443
 
+        # Compute raw zero-frame mask BEFORE normalization.
+        # Originally all-zero OpenPose failure frames become (-mean/std) after
+        # z-score, which makes seg.any() always True and disables filtering.
+        raw_valid_mask = skel.any(axis=1) if skel.ndim == 2 else np.ones(skel.shape[0], dtype=bool)
+
         # Per-video normalization: z-score on non-zero skeleton data
         if self.normalize_features and skel.shape[0] > 1:
-            non_zero_mask = skel.any(axis=1)
-            if non_zero_mask.sum() > 1:
-                skel_mean = skel[non_zero_mask].mean(axis=0)
-                skel_std = skel[non_zero_mask].std(axis=0)
+            if raw_valid_mask.sum() > 1:
+                skel_mean = skel[raw_valid_mask].mean(axis=0)
+                skel_std = skel[raw_valid_mask].std(axis=0)
                 skel_std[skel_std < 1e-6] = 1.0  # avoid division by zero
                 skel = (skel - skel_mean) / skel_std
 
@@ -106,10 +154,13 @@ class iMiGUEDataset(Dataset):
             ef = max(sf + 1, min(ef, skel.shape[0]))
             seg = skel[sf:ef, :]  # (T_inst, skel_dim)
 
+            # Use the RAW mask (pre-normalization) to filter OpenPose failure frames.
+            # After normalization, zero frames become non-zero (-mean/std),
+            # so checking seg.any() would incorrectly keep them.
             if self.filter_zero_frames and seg.shape[0] > 0:
-                valid = seg.any(axis=1)
-                if valid.any():
-                    seg = seg[valid]
+                seg_valid = raw_valid_mask[sf:ef]
+                if seg_valid.any():
+                    seg = seg[seg_valid]
 
             if seg.shape[0] == 0:
                 # Empty segment: use zero vector
@@ -133,11 +184,13 @@ class iMiGUEDataset(Dataset):
         if len(features) == 0:
             features.append(np.zeros(feat_dim, dtype=np.float32))
 
-        # Truncate if too many instances
+        # Truncate if too many instances (with warning)
         N = len(features)
+        truncated = False
         if N > self.max_bag_size:
             features = features[:self.max_bag_size]
             N = self.max_bag_size
+            truncated = True
 
         # Pad to max_bag_size
         if N < self.max_bag_size:
@@ -153,6 +206,8 @@ class iMiGUEDataset(Dataset):
             'subject_id': bag['subject_id'],
             'video_id': vid,
             'num_instances': N,
+            'num_instances_raw': bag['num_instances_raw'],
+            'truncated': truncated,
         }
 
 
@@ -205,13 +260,21 @@ if __name__ == '__main__':
     train_ids, val_ids, test_ids = get_split_ids(dataset_root)
     print(f'Splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}')
 
-    # Test with a small subset
-    ds = iMiGUEDataset(csv_path, skeleton_root, train_ids[:5], skeleton_npy_dir=npy_dir)
-    print(f'Dataset size: {len(ds)}')
+    # Test with class 99 included
+    print('\n--- With class 99 ---')
+    ds = iMiGUEDataset(csv_path, skeleton_root, train_ids[:5], skeleton_npy_dir=npy_dir,
+                       include_class99=True)
+
+    # Test with class 99 excluded
+    print('\n--- Without class 99 ---')
+    ds_no99 = iMiGUEDataset(csv_path, skeleton_root, train_ids[:5], skeleton_npy_dir=npy_dir,
+                            include_class99=False)
 
     sample = ds[0]
-    print(f'Features shape: {sample["features"].shape}')
+    print(f'\nFeatures shape: {sample["features"].shape}')
     print(f'Mask shape: {sample["mask"].shape}')
     print(f'Label: {sample["label"]}')
     print(f'Video ID: {sample["video_id"]}')
-    print(f'Num instances: {sample["num_instances"]}')
+    print(f'Num instances (raw): {sample["num_instances_raw"]}')
+    print(f'Num instances (used): {sample["num_instances"]}')
+    print(f'Truncated: {sample["truncated"]}')
