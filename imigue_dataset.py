@@ -16,7 +16,7 @@ from torch.utils.data import Dataset
 class iMiGUEDataset(Dataset):
     def __init__(self, csv_path, skeleton_root, video_ids, max_bag_size=64,
                  num_classes=32, filter_zero_frames=True, cache_skeletons=False,
-                 skeleton_npy_dir=None):
+                 skeleton_npy_dir=None, normalize_features=True):
         """
         Args:
             csv_path: Path to labels_20200831.csv
@@ -27,6 +27,7 @@ class iMiGUEDataset(Dataset):
             filter_zero_frames: Filter all-zero frames before mean pooling
             cache_skeletons: Cache skeleton data in memory
             skeleton_npy_dir: Path to mg_skeleton_npy/ (fast numpy format, preferred)
+            normalize_features: Z-normalize skeleton features per-video
         """
         self.skeleton_root = skeleton_root
         self.skeleton_npy_dir = skeleton_npy_dir
@@ -35,6 +36,7 @@ class iMiGUEDataset(Dataset):
         self.num_classes = num_classes
         self.filter_zero_frames = filter_zero_frames
         self.cache_skeletons = cache_skeletons
+        self.normalize_features = normalize_features
         self._skeleton_cache = {}
 
         # Read and group annotations
@@ -85,6 +87,15 @@ class iMiGUEDataset(Dataset):
 
         skel_dim = skel.shape[1] if skel.ndim == 2 else 411
         feat_dim = skel_dim + self.num_classes  # typically 443
+
+        # Per-video normalization: z-score on non-zero skeleton data
+        if self.normalize_features and skel.shape[0] > 1:
+            non_zero_mask = skel.any(axis=1)
+            if non_zero_mask.sum() > 1:
+                skel_mean = skel[non_zero_mask].mean(axis=0)
+                skel_std = skel[non_zero_mask].std(axis=0)
+                skel_std[skel_std < 1e-6] = 1.0  # avoid division by zero
+                skel = (skel - skel_mean) / skel_std
 
         features = []
         for cls, sf, ef in instances:

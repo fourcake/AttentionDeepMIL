@@ -146,7 +146,16 @@ def main():
 
     # Get splits
     train_ids, val_ids, test_ids = get_split_ids(args.dataset_root)
-    print(f'Splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}')
+
+    # The official val set is useless (all Win, subjects overlap with train).
+    # Build a proper subject-disjoint val split from training data.
+    from imigue_dataset import build_subject_cv_folds
+    folds = build_subject_cv_folds(train_ids, csv_path, n_folds=5)
+    # Use fold 0 as val
+    new_train_ids, new_val_ids = folds[0]
+    print(f'Splits: train={len(new_train_ids)}, val={len(new_val_ids)}, test={len(test_ids)}')
+    train_ids = new_train_ids
+    val_ids = new_val_ids
 
     # Optionally filter class 99
     if not args.include_class99:
